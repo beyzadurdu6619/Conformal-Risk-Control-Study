@@ -36,7 +36,7 @@ The following benchmark replicates the 4 major empirical applications presented 
 
 Given calibration data $(X_i, Y_i)_{i=1}^n$, the parameter $\hat{\lambda}$ is computed as:
 
-$$\hat{\lambda} = \inf \left\{ \lambda : \frac{n}{n+1} \widehat{R}_n(\lambda) + \frac{B}{n+1} \le \alpha \right\}$$
+$$\hat{\lambda} = \inf \{ \lambda : \frac{n}{n+1} \widehat{R}_n(\lambda) + \frac{B}{n+1} \le \alpha \}$$
 
 ---
 
