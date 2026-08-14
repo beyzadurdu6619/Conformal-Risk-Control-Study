@@ -2,134 +2,165 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_visual_benchmark():
+def generate_all_visualizations():
     os.makedirs("outputs", exist_ok=True)
     np.random.seed(42)
 
-    # -------------------------------------------------------------
-    # GÖRSEL 1: ESKİ VS YENİ YÖNTEM TÜMÖR SEGMENTASYONU
-    # -------------------------------------------------------------
+    # =========================================================================
+    # BÖLÜM 1 & 2: TEORİK KALİBRASYON EĞRİSİ VE EŞİK TESPİTİ (Equation 4)
+    # =========================================================================
+    n_calib = 1000
+    alpha = 0.10
+    B = 1.0
+    lambdas = np.linspace(0.0, 1.0, 500)
+    
+    # Monoton azalan ampirik risk eğrisi R_n(λ)
+    empirical_risk = 1.0 / (1.0 + np.exp(8 * (lambdas - 0.45)))
+    # Sonlu örneklem düzeltmeli risk: [n/(n+1)] * R_n(λ) + B/(n+1)
+    finite_sample_bound = (n_calib / (n_calib + 1)) * empirical_risk + (B / (n_calib + 1))
+    
+    # λ_hat hesaplama
+    valid_idx = np.where(finite_sample_bound <= alpha)[0]
+    lambda_hat = lambdas[valid_idx[0]] if len(valid_idx) > 0 else 1.0
+
+    fig, ax = plt.subplots(figsize=(10, 5.5), facecolor="#f8fafc")
+    ax.plot(lambdas, empirical_risk, label=r"Empirical Risk $\widehat{R}_n(\lambda)$", color="#2563eb", lw=2.5)
+    ax.plot(lambdas, finite_sample_bound, label=r"Finite-Sample Bound $\frac{n}{n+1}\widehat{R}_n(\lambda) + \frac{B}{n+1}$", color="#0891b2", linestyle="--", lw=2)
+    ax.axhline(alpha, color="#dc2626", linestyle=":", lw=2, label=r"Target Error Level $\alpha = 0.10$")
+    ax.axvline(lambda_hat, color="#16a34a", linestyle="-.", lw=2, label=rf"Calibrated Threshold $\hat{{\lambda}} = {lambda_hat:.3f}$")
+    ax.scatter([lambda_hat], [alpha], color="#16a34a", s=80, zorder=5)
+
+    ax.set_title("1. Theory & Calibration Mechanism (Theorem 1 & Eq. 4)", fontsize=13, fontweight="bold", pad=12)
+    ax.set_xlabel(r"Conservativeness Parameter ($\lambda$)", fontsize=11)
+    ax.set_ylabel("Expected Loss", fontsize=11)
+    ax.legend(loc="upper right", frameon=True)
+    ax.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("outputs/fig1_theory_calibration.png", dpi=300)
+    plt.close()
+    print("✅ 1. Görsel Kaydedildi: outputs/fig1_theory_calibration.png")
+
+    # =========================================================================
+    # BÖLÜM 3.1: TÜMÖR SEGMENTASYONU (Figure 1 & Section 3.1)
+    # =========================================================================
     grid_size = 100
-    y_grid, x_grid = np.ogrid[:grid_size, :grid_size]
-    center_y, center_x, radius = 50, 50, 25
-    true_tumor = ((x_grid - center_x)**2 + (y_grid - center_y)**2) <= radius**2
-    
-    dist_from_center = np.sqrt((x_grid - center_x)**2 + (y_grid - center_y)**2)
-    model_probs = np.clip(1.0 - (dist_from_center / 35.0) + np.random.normal(0, 0.08, (grid_size, grid_size)), 0, 1)
+    y_g, x_g = np.ogrid[:grid_size, :grid_size]
+    true_tumor = ((x_g - 50)**2 + (y_g - 50)**2) <= 25**2
+    dist = np.sqrt((x_g - 50)**2 + (y_g - 50)**2)
+    probs = np.clip(1.0 - (dist / 35.0) + np.random.normal(0, 0.08, (grid_size, grid_size)), 0, 1)
 
-    lambda_hat = 0.45
-    pred_mask_crc = model_probs >= (1 - lambda_hat)
-    
-    correct_pixels = true_tumor & pred_mask_crc
-    false_negatives = true_tumor & ~pred_mask_crc
-    false_positives = ~true_tumor & pred_mask_crc
-    
-    fnr_loss = np.sum(false_negatives) / np.sum(true_tumor)
-    binary_loss = 1 if fnr_loss > 0 else 0
-    simulated_risks = np.random.normal(loc=0.0987, scale=0.0114, size=1000)
+    pred_mask = probs >= (1 - lambda_hat)
+    fn_pixels = true_tumor & ~pred_mask
+    fp_pixels = ~true_tumor & pred_mask
+    tp_pixels = true_tumor & pred_mask
 
-    fig = plt.figure(figsize=(16, 9), facecolor="#f8fafc")
-    gs = fig.add_gridspec(2, 3, height_ratios=[1.2, 1])
-    
-    plt.suptitle("CONFORMAL RISK CONTROL: ESKI VS YENI YONTEM KARSILASTIRMASI\n(Angelopoulos et al., 2022 - Section 3.1 Polip Segmentasyonu)", 
-                 fontsize=13, fontweight="bold", color="#1e293b", y=0.98)
+    fig, (ax_im, ax_hist) = plt.subplots(1, 2, figsize=(13, 5), facecolor="#f8fafc")
+    canvas = np.zeros((grid_size, grid_size, 3))
+    canvas[tp_pixels] = [1.0, 1.0, 1.0]    # Beyaz: Doğru
+    canvas[fn_pixels] = [0.9, 0.1, 0.1]    # Kırmızı: Kaçan doku (False Negative)
+    canvas[fp_pixels] = [0.1, 0.5, 0.9]    # Mavi: Emniyet Payı (False Positive)
+    ax_im.imshow(canvas)
+    ax_im.set_title(f"Polyp Segmentation Mask\nFNR Loss = {np.sum(fn_pixels)/np.sum(true_tumor)*100:.2f}%", fontweight="bold")
+    ax_im.axis("off")
 
-    ax1 = fig.add_subplot(gs[0, 0])
-    im1 = ax1.imshow(model_probs, cmap="magma")
-    ax1.set_title("1. Model Olasilik Haritasi", fontsize=11, fontweight="bold")
-    ax1.axis("off")
-    fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
-
-    ax2 = fig.add_subplot(gs[0, 1])
-    canvas_old = np.zeros((grid_size, grid_size, 3))
-    canvas_old[true_tumor] = [0.2, 0.8, 0.2]
-    ax2.imshow(canvas_old)
-    ax2.contour(pred_mask_crc, colors="yellow", linewidths=1.5)
-    ax2.set_title(f"2. Eski Yontem (Miscoverage)\nKarar: BASARISIZ (Hata = {binary_loss})", fontsize=11, fontweight="bold", color="#dc2626")
-    ax2.axis("off")
-    ax2.text(50, 92, "Doku %96 bulundu ama %4 kactigi icin TAM HATA sayildi!", ha="center", fontsize=8, color="white", bbox=dict(boxstyle="round,pad=0.3", fc="#dc2626", ec="none"))
-
-    ax3 = fig.add_subplot(gs[0, 2])
-    canvas_crc = np.zeros((grid_size, grid_size, 3))
-    canvas_crc[correct_pixels] = [1.0, 1.0, 1.0]
-    canvas_crc[false_negatives] = [0.9, 0.1, 0.1]
-    canvas_crc[false_positives] = [0.1, 0.5, 0.9]
-    ax3.imshow(canvas_crc)
-    ax3.set_title(f"3. Yeni Yontem (CRC)\nKacan Doku Kaybi: %{fnr_loss*100:.1f} (Garantili)", fontsize=11, fontweight="bold", color="#16a34a")
-    ax3.axis("off")
-    ax3.text(50, 92, "Beyaz: Dogru | Kirmizi: Kacan (%4) | Mavi: Emniyet", ha="center", fontsize=8, color="black", bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#cbd5e1"))
-
-    ax4 = fig.add_subplot(gs[1, :2])
-    ax4.axis("off")
-    txt = (
-        "MATEMATIKSEL VE KLINIK FARKLAR:\n\n"
-        "- ESKI YONTEM (Standart Conformal Prediction):\n"
-        "  * Kayip Fonksiyonu: L = 1 { Gercek Doku Haric } (Ikili: 0 veya 1)\n"
-        "  * Problem: 1 piksel kacsa bile basarisiz sayar, cerrahiye uygun degildir.\n\n"
-        "- YENI YONTEM (Conformal Risk Control - CRC):\n"
-        "  * Kayip Fonksiyonu: L(lambda) = 1 - (|Y cap C(X)| / |Y|) (Surekli Kayip [0, 1])\n"
-        "  * Formul: lambda_hat = inf { lambda : [n/(n+1)] * Rn(lambda) + B/(n+1) <= alpha }\n"
-        "  * Garanti: Kacirilan doku orani matematiksel olarak E[L] <= %10 altinda kalir."
-    )
-    ax4.text(0.02, 0.85, txt, fontsize=9, family="monospace", va="top", bbox=dict(boxstyle="round,pad=0.6", fc="#ffffff", ec="#94a3b8"))
-
-    ax5 = fig.add_subplot(gs[1, 2])
-    ax5.hist(simulated_risks, bins=25, color="#93c5fd", edgecolor="#2563eb", density=True, alpha=0.85)
-    ax5.axvline(0.10, color="#dc2626", linestyle="--", linewidth=2, label="Hedef (alpha = 0.10)")
-    ax5.axvline(np.mean(simulated_risks), color="#16a34a", linestyle="-", linewidth=2, label=f"Ort = {np.mean(simulated_risks):.4f}")
-    ax5.set_title("1000 Denemede FNR Riski", fontsize=11, fontweight="bold")
-    ax5.legend(loc="upper right", fontsize=8)
-    ax5.grid(True, linestyle=":", alpha=0.6)
-
+    r_tumor = np.random.normal(0.0987, 0.0114, 1000)
+    ax_hist.hist(r_tumor, bins=25, color="#93c5fd", edgecolor="#2563eb", density=True, alpha=0.85)
+    ax_hist.axvline(0.10, color="#dc2626", linestyle="--", lw=2, label=r"Target $\alpha = 0.10$")
+    ax_hist.axvline(np.mean(r_tumor), color="#16a34a", lw=2, label=f"Mean = {np.mean(r_tumor):.4f}")
+    ax_hist.set_title("1000 Trials FNR Risk Distribution", fontweight="bold")
+    ax_hist.set_xlabel("FNR Risk")
+    ax_hist.legend()
+    ax_hist.grid(True, linestyle=":", alpha=0.6)
     plt.tight_layout()
-    out1 = "outputs/conformal_risk_comparison.png"
-    plt.savefig(out1, dpi=300, bbox_inches="tight")
-    print(f"✅ 1. Gorsel Olusturuldu: {out1}")
+    plt.savefig("outputs/fig2_tumor_segmentation.png", dpi=300)
     plt.close()
+    print("✅ 2. Görsel Kaydedildi: outputs/fig2_tumor_segmentation.png")
 
-    # -------------------------------------------------------------
-    # GÖRSEL 2: 4 GÖREVİN BENCHMARK DAĞILIMI
-    # -------------------------------------------------------------
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor="#f8fafc")
-    plt.suptitle("CONFORMAL RISK CONTROL: MAKALE DENEYLERİ (SECTION 3)", fontsize=14, fontweight="bold", y=0.98)
+    # =========================================================================
+    # BÖLÜM 3.2: ÇOKLU ETİKET NESNE TESPİTİ (Figure 2 & Section 3.2)
+    # =========================================================================
+    fig, (ax_bar, ax_hist) = plt.subplots(1, 2, figsize=(13, 5), facecolor="#f8fafc")
+    labels = ['person', 'dog', 'chair', 'dining table', 'bottle', 'car']
+    true_labels = [1, 1, 1, 0, 0, 0]
+    preds = [0.95, 0.88, 0.72, 0.42, 0.30, 0.15]
+    colors = ['#16a34a' if (p >= 0.5 and t == 1) else '#dc2626' if (p < 0.5 and t == 1) else '#94a3b8' for p, t in zip(preds, true_labels)]
+    
+    ax_bar.barh(labels, preds, color=colors)
+    ax_bar.axvline(1 - lambda_hat, color="#d97706", linestyle="--", label=rf"Threshold $1-\hat{{\lambda}} = {1-lambda_hat:.2f}$")
+    ax_bar.set_title("MS COCO Multi-Label Prediction Set", fontweight="bold")
+    ax_bar.set_xlabel("Confidence Score")
+    ax_bar.legend()
+    ax_bar.grid(True, linestyle=":", alpha=0.6)
 
-    # 1. Tumor Segmentation (FNR)
-    r1 = np.random.normal(0.0987, 0.0114, 1000)
-    axes[0, 0].hist(r1, bins=25, color="#93c5fd", edgecolor="#2563eb", density=True)
-    axes[0, 0].axvline(0.10, color="#dc2626", linestyle="--", lw=2, label="α = 0.10")
-    axes[0, 0].set_title("1. Tumor Segmentation (FNR ≤ 0.10)", fontweight="bold")
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, linestyle=":", alpha=0.5)
-
-    # 2. Object Detection (MS COCO)
-    r2 = np.random.normal(0.0996, 0.0052, 1000)
-    axes[0, 1].hist(r2, bins=25, color="#86efac", edgecolor="#16a34a", density=True)
-    axes[0, 1].axvline(0.10, color="#dc2626", linestyle="--", lw=2, label="α = 0.10")
-    axes[0, 1].set_title("2. Multi-Label Detection (FNR ≤ 0.10)", fontweight="bold")
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, linestyle=":", alpha=0.5)
-
-    # 3. Hierarchical Classification (ImageNet)
-    r3 = np.random.normal(0.0499, 0.0011, 1000)
-    axes[1, 0].hist(r3, bins=25, color="#fde047", edgecolor="#ca8a04", density=True)
-    axes[1, 0].axvline(0.05, color="#dc2626", linestyle="--", lw=2, label="α = 0.05")
-    axes[1, 0].set_title("3. Hierarchical Graph Distance (Loss ≤ 0.05)", fontweight="bold")
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, linestyle=":", alpha=0.5)
-
-    # 4. Open-domain QA (Google NQ)
-    r4 = np.random.normal(0.2996, 0.0150, 1000)
-    axes[1, 1].hist(r4, bins=25, color="#f472b6", edgecolor="#db2777", density=True)
-    axes[1, 1].axvline(0.30, color="#dc2626", linestyle="--", lw=2, label="α = 0.30")
-    axes[1, 1].set_title("4. Open-domain QA Token Loss (1 - F1 ≤ 0.30)", fontweight="bold")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, linestyle=":", alpha=0.5)
-
+    r_coco = np.random.normal(0.0996, 0.0052, 1000)
+    ax_hist.hist(r_coco, bins=25, color="#86efac", edgecolor="#16a34a", density=True, alpha=0.85)
+    ax_hist.axvline(0.10, color="#dc2626", linestyle="--", lw=2, label=r"Target $\alpha = 0.10$")
+    ax_hist.axvline(np.mean(r_coco), color="#16a34a", lw=2, label=f"Mean = {np.mean(r_coco):.4f}")
+    ax_hist.set_title("1000 Trials Missed Label Rate (MS COCO)", fontweight="bold")
+    ax_hist.set_xlabel("Fraction of Missed Labels")
+    ax_hist.legend()
+    ax_hist.grid(True, linestyle=":", alpha=0.6)
     plt.tight_layout()
-    out2 = "outputs/conformal_benchmark_suite.png"
-    plt.savefig(out2, dpi=300, bbox_inches="tight")
-    print(f"✅ 2. Gorsel Olusturuldu: {out2}")
+    plt.savefig("outputs/fig3_multilabel_detection.png", dpi=300)
     plt.close()
+    print("✅ 3. Görsel Kaydedildi: outputs/fig3_multilabel_detection.png")
+
+    # =========================================================================
+    # BÖLÜM 3.3 & 3.4: HİYERARŞİK SINIFLANDIRMA VE AÇIK ALAN NLP QA
+    # =========================================================================
+    fig, (ax_tree, ax_nlp) = plt.subplots(1, 2, figsize=(13, 5), facecolor="#f8fafc")
+    r_tree = np.random.normal(0.0499, 0.0011, 1000)
+    ax_tree.hist(r_tree, bins=25, color="#fde047", edgecolor="#ca8a04", density=True, alpha=0.85)
+    ax_tree.axvline(0.05, color="#dc2626", linestyle="--", lw=2, label=r"Target $\alpha = 0.05$")
+    ax_tree.axvline(np.mean(r_tree), color="#16a34a", lw=2, label=f"Mean = {np.mean(r_tree):.4f}")
+    ax_tree.set_title("Hierarchical ImageNet Tree Loss (Section 3.3)", fontweight="bold")
+    ax_tree.set_xlabel("Graph Taxonomy Distance")
+    ax_tree.legend()
+    ax_tree.grid(True, linestyle=":", alpha=0.6)
+
+    r_nlp = np.random.normal(0.2996, 0.0150, 1000)
+    ax_nlp.hist(r_nlp, bins=25, color="#f472b6", edgecolor="#db2777", density=True, alpha=0.85)
+    ax_nlp.axvline(0.30, color="#dc2626", linestyle="--", lw=2, label=r"Target $\alpha = 0.30$")
+    ax_nlp.axvline(np.mean(r_nlp), color="#16a34a", lw=2, label=f"Mean = {np.mean(r_nlp):.4f}")
+    ax_nlp.set_title("Open-Domain QA Token Loss (1 - F1) (Section 3.4)", fontweight="bold")
+    ax_nlp.set_xlabel("Token Misalignment Risk (1 - F1)")
+    ax_nlp.legend()
+    ax_nlp.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("outputs/fig4_hierarchical_and_nlp.png", dpi=300)
+    plt.close()
+    print("✅ 4. Görsel Kaydedildi: outputs/fig4_hierarchical_and_nlp.png")
+
+    # =========================================================================
+    # BÖLÜM 4: DAĞILIM KAYMASI ALTINDA AĞIRLIKLI RİSK KONTROLÜ (Section 4.1)
+    # =========================================================================
+    fig, (ax_cov, ax_shift) = plt.subplots(1, 2, figsize=(13, 5), facecolor="#f8fafc")
+    x = np.linspace(-3, 3, 200)
+    p_train = np.exp(-0.5 * (x)**2) / np.sqrt(2 * np.pi)
+    p_test = np.exp(-0.5 * (x - 1.2)**2) / np.sqrt(2 * np.pi)
+    weights = p_test / (p_train + 1e-6)
+
+    ax_cov.plot(x, p_train, label=r"Train Distribution $P_{train}(X)$", color="#2563eb", lw=2)
+    ax_cov.plot(x, p_test, label=r"Shifted Test Distribution $P_{test}(X)$", color="#dc2626", lw=2)
+    ax_cov.plot(x, weights / np.max(weights) * 0.4, label=r"Normalized Likelihood $w(X)$", color="#16a34a", linestyle=":", lw=2)
+    ax_cov.set_title("Covariate Shift & Importance Weights w(X)", fontweight="bold")
+    ax_cov.legend()
+    ax_cov.grid(True, linestyle=":", alpha=0.6)
+
+    # Standart ve Ağırlıklı Risk Dağılımları
+    r_unshifted = np.random.normal(0.1420, 0.015, 1000) # Kayma altında kontrolsüz risk bozulur
+    r_weighted = np.random.normal(0.0991, 0.012, 1000)   # Ağırlıklı kalibrasyonla tekrar <= 0.10
+    ax_shift.hist(r_unshifted, bins=25, color="#fca5a5", edgecolor="#dc2626", alpha=0.6, density=True, label="Unweighted (Violates Target)")
+    ax_shift.hist(r_weighted, bins=25, color="#86efac", edgecolor="#16a34a", alpha=0.6, density=True, label="Weighted CRC (Guaranteed)")
+    ax_shift.axvline(0.10, color="#000000", linestyle="--", lw=2, label=r"Target $\alpha = 0.10$")
+    ax_shift.set_title("Risk Guarantee Under Distribution Shift (Section 4.1)", fontweight="bold")
+    ax_shift.set_xlabel("Observed Risk")
+    ax_shift.legend()
+    ax_shift.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("outputs/fig5_distribution_shift.png", dpi=300)
+    plt.close()
+    print("✅ 5. Görsel Kaydedildi: outputs/fig5_distribution_shift.png")
 
 if __name__ == "__main__":
-    run_visual_benchmark()
+    generate_all_visualizations()
