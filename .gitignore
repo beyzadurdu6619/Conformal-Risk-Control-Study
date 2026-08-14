@@ -3,5 +3,4 @@ env/
 __pycache__/
 *.pyc
 outputs/*.pdf
-outputs/*.png
 .DS_Store
